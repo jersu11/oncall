@@ -31,8 +31,6 @@ function oncall_install() {
   user_role_grant_permissions(1, array('oncall help message'));
   user_role_grant_permissions(2, array('oncall help message'));
   
-  db_create_table('oncall_team', drupal_get_schema_unprocessed('oncall', 'oncall_team'));
-  db_create_table('oncall_message', drupal_get_schema_unprocessed('oncall', 'oncall_message'));
 }
 
 
@@ -40,10 +38,16 @@ function oncall_install() {
  * Implements hook_uninstall().
  */
 function oncall_uninstall() {
-  variable_del('oncall_user_roll');
+  // Remove all variables.
+  $results = db_select('variable', 'v')
+    ->fields('v', array('name'))
+    ->condition('name', 'oncall%', 'LIKE')
+    ->execute();
+  foreach ($results as $result) {
+    variable_del($result->name);
+  }
+
   user_role_delete('on call');
-  db_drop_table('oncall_team');
-  db_drop_table('oncall_message');
 }
 
 

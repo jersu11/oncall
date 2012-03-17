@@ -354,7 +354,7 @@ function oncall_config_extra_form($form, &$form_state) {
  * build the initial greeting and phone tree
  */
 function oncall_twilio_connect() {
-  $info = libraries_load('twilio');
+  $info = libraries_load('twilio-php');
   if (!$info['loaded']) {
     return "twilio api library didn't load";
   }
@@ -401,7 +401,7 @@ function oncall_twilio_connect() {
  * - our caller just told us what to do, now we do it
  */
 function oncall_twilio_dispatch() {
-  $info = libraries_load('twilio');
+  $info = libraries_load('twilio-php');
   if (!$info['loaded']) {
     return "twilio api library didn't load";
   }
