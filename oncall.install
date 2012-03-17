@@ -1,0 +1,121 @@
+<?php
+/**
+ * @file
+ * Provides installation functions.
+ *
+ * @author Jeremy Sullivan ("jersu", http://drupal.org/user/47878)
+ */
+
+
+/**
+ * Implements hook_install().
+ */
+function oncall_install() {
+  // make the default 'on call' user role
+  $role = new stdClass;
+  $role->name = 'on call';
+  $role->weight = 1;
+  user_role_save($role);
+
+  // track the 'on call' user roll
+  variable_set('oncall_user_roll', $role->rid);
+
+  // Permissions to assign to the role.
+  $perms = array(
+    'oncall status message',
+    'oncall help message',
+  );
+
+  // Grant the permissions. 
+  user_role_grant_permissions($role->rid, $perms); 
+  user_role_grant_permissions(1, array('oncall help message'));
+  user_role_grant_permissions(2, array('oncall help message'));
+  
+  db_create_table('oncall_team', drupal_get_schema_unprocessed('oncall', 'oncall_team'));
+  db_create_table('oncall_message', drupal_get_schema_unprocessed('oncall', 'oncall_message'));
+}
+
+
+/**
+ * Implements hook_uninstall().
+ */
+function oncall_uninstall() {
+  variable_del('oncall_user_roll');
+  user_role_delete('on call');
+  db_drop_table('oncall_team');
+  db_drop_table('oncall_message');
+}
+
+
+/**
+ * hook_schema()
+ */
+function oncall_schema() {
+  $schema['oncall_team'] = array(
+    'description' => 'Table that tracks the members of the oncall team', 
+    'fields' => array(
+      'uid' => array(
+        'type' => 'int', 
+        'not null' => TRUE, 
+        'default' => 0, 
+        'description' => 'The {users}.uid of the oncall team member',
+      ), 
+      'phone' => array(
+        'type' => 'varchar', 
+        'length' => 64, 
+        'not null' => TRUE, 
+        'default' => '', 
+        'description' => 'The team member\'s SMS ready phone number',
+      ), 
+      'available' => array(
+        'type' => 'int', 
+        'unsigned' => TRUE, 
+        'not null' => TRUE, 
+        'default' => 0, 
+        'size' => 'tiny', 
+        'description' => 'Tracks the availability of team member; ranges from 0 (Not Available) to 1 (Available)',
+      ),
+      'leader' => array(
+        'type' => 'int', 
+        'unsigned' => TRUE, 
+        'not null' => TRUE, 
+        'default' => 0, 
+        'size' => 'tiny', 
+        'description' => 'Tracks whether this person is the team leader; ranges from 0 (Nope) to 1 (Yep)',
+      ), 
+    ), 
+    'primary key' => array('uid'), 
+    'indexes' => array(
+      'available' => array('available'), 
+      'leader' => array('leader'),
+    ),
+  );
+  
+  $schema['oncall_message'] = array(
+    'description' => 'Table to track the voice mail messages left in the system',
+    'fields' => array(
+      'created' => array(
+        'type' => 'int', 
+        'not null' => TRUE, 
+        'default' => 0, 
+        'description' => 'Unix timestamp of when event occurred.',
+      ),
+      'type' => array(
+        'type' => 'varchar', 
+        'length' => 64, 
+        'not null' => TRUE, 
+        'default' => '', 
+        'description' => 'The type of message, typically \'help\' or \'status\'',
+      ), 
+      'message' => array(
+        'type' => 'text', 
+        'not null' => TRUE, 
+        'description' => 'URL of the message.',
+      ), 
+    ),
+    'primary key' => array('created'),
+    'indexes' => array('type' => array('type')),
+  );
+
+  return $schema;
+} 

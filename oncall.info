@@ -1,0 +1,5 @@
+name = On Call
+description = A module that connects those looking for help to an on-call support team using the Twilio service.
+package = Twilio
+core = 7.x
+dependencies[] = twilioapi

@@ -1,0 +1,592 @@
+<?php 
+
+
+/**
+ * Implements hook_menu()
+ */
+function oncall_menu() {
+  // define the twilio endpoints
+  $items['oncall/connect'] = array(
+    'page callback' => 'oncall_twilio_connect',
+    'access arguments' => array('access content'),
+    'type' => MENU_CALLBACK,
+  );
+  $items['oncall/dispatch'] = array(
+    'page callback' => 'oncall_twilio_dispatch',
+    'access arguments' => array('access content'),
+    'type' => MENU_CALLBACK,
+  );
+  $items['oncall/record/%'] = array(
+    'page callback' => 'oncall_twilio_record',
+    'page arguments' => arg(2),
+    'access arguments' => array('access content'),
+    'type' => MENU_CALLBACK,
+  );
+  
+  // define the admin pages
+  $items['admin/config/services/oncall'] = array(
+    'title' => 'On Call Config Page',
+    'description' => 'Configure the site description, the number of items per feed and whether feeds should be titles/teasers/full-text.',
+    'page callback' => 'oncall_page_config',
+    'access arguments' => array('oncall admin'),
+  );
+  $items['admin/config/services/oncall/main'] = array(
+    'title' => 'On Call Config Page',
+    'type' => MENU_DEFAULT_LOCAL_TASK,
+  );
+  $items['admin/config/services/oncall/extra'] = array(
+    'title' => 'Additional On Call Settings',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('oncall_config_extra_form'),
+    'access arguments' => array('oncall admin'),
+    'weight' => 2,
+    'type' => MENU_LOCAL_TASK,
+  );
+  return $items;
+}
+
+
+/**
+ * Implements hook_perm().
+ */
+function oncall_permission() {
+  return array(
+    'oncall admin' => array('title' => t('Administer On Call Settings'), 'description' => t('Allow users to modify the On Call settings')),
+    'oncall status message' => array('title' => t('Leave Status Message'), 'description' => t('Using the telephone, allow users to leave a status message')),
+    'oncall help message' => array('title' => t('Leave Help Message'), 'description' => t('Using the telephone, allow users to contact the On Call team and leave a \'help us\' message')),
+  );
+}
+
+
+/**
+ * hook_form_alter()
+ *
+ * add telephone number and availability to user edit page
+ */
+function oncall_form_alter(&$form, &$form_state, $form_id) {
+  if ($form_id != 'user_profile_form') {
+    return;
+  }
+
+  $account = $form['#user'];
+
+  if (array_key_exists(variable_get('oncall_user_roll', 3), $account->roles)) {
+    $oncall_user = oncall_user_settings($account->uid);
+  
+    $form['oncall'] = array(
+      '#type' => 'fieldset',
+      '#title' => t('OnCall Settings'),
+      '#weight' => 1,
+    );
+    
+    $form['oncall']['oc_phone'] = array(
+      '#type' => 'textfield', 
+      '#title' => t('Phone Number'), 
+      '#default_value' => isset($oncall_user->phone) ? $oncall_user->phone : '12065551212', 
+      '#size' => 30, 
+      '#maxlength' => 15, 
+      '#description' => t('Enter the phone number you\'d like to have your OnCall SMS messages sent. Enter only numbers in this field, and include the country code. For US numbers, including the country code means starting with the number 1'),
+    );
+    
+    $form['oncall']['oc_active'] = array(
+      '#type' => 'radios',
+      '#title' => t('OnCall Availability'),
+      '#default_value' => isset($oncall_user->active) ? $oncall_user->active : 1,
+      '#options' => array(0 => t('Away'), 1 => t('Available')),
+      '#description' => t('When set to "Available", sms messages from the OnCall service may be sent to the telephone number given above.'),
+    );
+
+    $form['#validate'][] = 'oncall_user_form_validate';
+    $form['#submit'][] = 'oncall_user_form_submit';
+  } 
+}
+ 
+/**
+ * validate the phone number
+ */
+function oncall_user_form_validate($form, &$form_state) {
+  // some phone validators found around the web
+  $phone_validator = array( 
+    'us' => '/^(1([-\. ]?\d{3})[-\. ]?)?(\d{3})([-\. ]?\d{4})$/',
+    'uk' => '/^(\+44\s?7\d{3}|\(?07\d{3}\)?)\s?\d{3}\s?\d{3}$/',
+    'uae' => '/^(\+97[\s]{0,1}[\-]{0,1}[\s]{0,1}1|0)50[\s]{0,1}[\-]{0,1}[\s]{0,1}[1-9]{1}[0-9]{6}$/',
+    'nz' => '/^\([0]\d{2}\))(\d{6,7}$/',
+  );
+
+  $validate = variable_get('oncall_validate_phone', 'none');
+  if (isset($phone_validator[$validate])) {
+    if(!preg_match($phone_validator[$validate], $form_state['values']['oc_phone'])) {
+      form_set_error('oc_phone', t('That does not look like a valid telephone number'));
+    }  
+  }
+}
+
+/** 
+ * store the data in our table
+ */
+function oncall_user_form_submit($form, &$form_state) {
+  $account = $form['#user'];
+  $phone = preg_replace('/\D/', '', $form_state['values']['oc_phone']);
+  
+  // find if this user is already in our table
+  $exists = db_select('oncall_team', 'oc')
+    ->fields('oc')
+    ->condition('uid', $account->uid,'=')
+    ->execute()
+    ->rowCount(); 
+
+  if ($exists) {
+    db_update('oncall_team') 
+      ->fields(array(
+        'phone' => $phone,
+        'available' => $form_state['values']['oc_active'],
+      ))
+      ->condition('uid', $account->uid, '=')
+      ->execute();
+  }
+  else {
+    db_insert('oncall_team')
+      ->fields(array(
+        'uid' => $account->uid,
+        'phone' => $phone,
+        'available' => $form_state['values']['oc_active'],
+      ))
+      ->execute();
+  }
+} 
+
+
+/**
+ * oncall config page
+ */
+function oncall_page_config() {
+  $rows = array();
+  $header = array(t('Person'), t('Phone Number'), t('Point Person'));
+  foreach (oncall_get_team() as $member) {
+    $lead = ($member['leader'] == 1) ? 'Yes' : 'No';
+    $rows[] = array(l($member['name'], 'user/'. $member['uid']), $member['phone'], $lead);
+  }
+  
+  $out  = "<h3>The On Call Team</h3>";
+  $out .= theme('table', array('header' => $header, 'rows' => $rows));
+  $out .= drupal_render(drupal_get_form('oncall_config_form'));
+  
+  return $out;
+}
+
+
+/**
+ * oncall config main settings
+ */
+function oncall_config_form($form, &$form_state) {
+  $team = oncall_get_team();
+  $team_select = array();
+  $leader = 0;
+  
+  foreach($team as $member) {
+    if ($member['leader'] == 1) {
+      $leader = $member['uid'];
+    }
+    $team_select[$member['uid']] = $member['name'];
+  }
+  
+  // select team leader
+  $form['oncall_point'] = array(
+    '#type' => 'select', 
+    '#title' => t('On Call Point Person'), 
+    '#default_value' => $leader, 
+    '#options' => $team_select, 
+    '#tree' => FALSE, 
+    '#description' => t('Select the person who is leading the team. This person may be contacted directly through the On Call service.'),
+  );
+  
+  // sms message
+  $form['oncall_sms'] = array(
+    '#type' => 'textarea',
+    '#title' => t('SMS Message Text'),
+    '#description' => t('The message to be sent when a new help request comes in. Include the variable @url to include a link to listen to the message.'),
+    '#default_value' => variable_get('oncall_sms_msg', 'A new help request has been received. Listen here @url'),
+    '#rows' => 3,
+  );
+  
+  // welcome message
+  $form['welcome'] = array(
+    '#type' => 'fieldset', 
+    '#title' => t('Welcome Message'), 
+  );
+  $form['welcome']['welcome_current'] = array(
+    '#markup' => "<audio src='". oncall_get_message('welcome') ."' controls preload='auto' autobuffer></audio>",
+  );
+  $form['welcome']['oncall_welcome'] = array(
+    '#type' => 'file',
+    '#size' => 22,
+    '#description' => t('The mp3 audio file that will be played every time a person calls the On Call line.'),
+  );
+  
+  // 'no status' message
+  $form['nostatus'] = array(
+    '#type' => 'fieldset', 
+    '#title' => t('No New Status Message'), 
+  );
+  $form['nostatus']['nostatus_current'] = array(
+    '#markup' => "<audio src='". oncall_get_message('nostatus') ."' controls preload='auto' autobuffer></audio>", 
+  );
+  $form['nostatus']['oncall_nostatus'] = array(
+    '#type' => 'file',
+    '#size' => 22,
+    '#description' => t('The mp3 audio file that will be played when there are no recent status messages to report.'),
+  );
+  
+  $form['submit'] = array(
+    '#type' => 'submit',
+    '#value' => t('Submit'),
+  );
+  
+  return $form;
+}
+
+/**
+ * oncall_config_form submit validator
+ */
+function oncall_config_form_validate($form, &$form_state) {
+  // If required, validate the uploaded picture.
+  $validators = array(
+    'file_validate_extensions' => array('mp3'), 
+  );
+
+  // Save the 'welcome' message as a temporary file.
+  $welcome = file_save_upload('oncall_welcome', $validators);
+  if ($welcome === FALSE) {
+    form_set_error('oncall_welcome', t('Not able to save that file. Make sure your files directory is writeable and that the file is an MP3'));
+  }
+  elseif ($welcome !== NULL) {
+    $form_state['values']['oncall_welcome'] = $welcome;
+  }
+
+  // Save the 'welcome' message as a temporary file.
+  $nostatus = file_save_upload('oncall_nostatus', $validators);
+  if ($nostatus === FALSE) {
+    form_set_error('oncall_nostatus', t('Not able to save that file. Make sure your files directory is writeable and that the file is an MP3'));
+  }
+  elseif ($nostatus !== NULL) {
+    $form_state['values']['oncall_nostatus'] = $nostatus;
+  }
+  
+}
+
+/**
+ * oncall_config_form submit handler
+ */
+function oncall_config_form_submit($form, &$form_state) {
+  // set all team members to zero, then update the team member to leader
+  db_update('oncall_team')
+    ->fields(array('leader' => 0))
+    ->execute();
+
+  db_update('oncall_team')
+    ->fields(array('leader' => 1))
+    ->condition('uid', $form_state['values']['oncall_point'], '=')
+    ->execute();
+    
+  variable_set('oncall_sms_msg', $form_state['values']['oncall_sms']);
+
+  $welcome_msg = $form_state['values']['oncall_welcome'];
+  oncall_save_message($welcome_msg, 'welcome');
+
+  $nostatus_msg = $form_state['values']['oncall_nostatus'];
+  oncall_save_message($nostatus_msg, 'nostatus');
+  
+}
+
+
+/**
+ * oncall config extra settings - set additional variables
+ */
+function oncall_config_extra_form($form, &$form_state) {
+  $form['intro'] = array(
+    '#type' => 'item', 
+    '#markup' => t('A few additional settings for the On Call module'),
+  );
+
+  $form['oncall_phone_number'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Application Phone Number'),
+    '#default_value' => variable_get('oncall_phone_number', ''),
+    '#description' => t('Your application phone number is your Twilio number that will be used to access this On Call module. This is needed here to send SMS messages.'),
+  );
+
+  $form['oncall_user_roll'] = array(
+    '#type' => 'select', 
+    '#title' => t('The User Role that tracks team members'), 
+    '#default_value' => variable_get('oncall_user_roll', 2), 
+    '#empty_option' => t('No Role'), 
+    '#options' => user_roles(), 
+    '#tree' => FALSE, 
+    '#description' => t('Members of this User Role will be able to set their telephone number and be tracked as a part of the On Call team.'),
+  );
+
+  $form['oncall_validate_phone'] = array(
+    '#type' => 'select', 
+    '#title' => t('Phone Number Validation'), 
+    '#default_value' => variable_get('oncall_validate_phone', 'none'), 
+    '#empty_option' => t('No Validation'), 
+    '#options' => array('us' => 'United States', 'uk' => 'United Kingdom', 'uae' => 'United Arab Emirates', 'nz' => 'New Zealand'), 
+    '#tree' => FALSE, 
+    '#description' => t('Should the phone number entered by team members be validated? And if so, what country phone number pattern should it be validated against?'),
+  );
+
+  // times are 6 hours, 12 hours, 18 hours, 1 day, 2 days, 1 week
+  // 6 hours = 6*60*60 = 21600
+  $form['oncall_expire_status_msg'] = array(
+    '#type' => 'select', 
+    '#title' => t('Status Message Expiration'), 
+    '#default_value' => variable_get('oncall_expire_status_msg', 86400), 
+    '#options' => array(0 => t('Never')) + drupal_map_assoc(array(21600, 43200, 64800, 86400, 172800, 604800), 'format_interval'),
+    '#tree' => FALSE,
+    '#description' => t('How much time should pass before the most recent status message expires? Expired messages will not play on the phone message.'),
+  );
+
+  return system_settings_form($form);
+}
+
+
+/**
+ * build the initial greeting and phone tree
+ */
+function oncall_twilio_connect() {
+  $info = libraries_load('twilio');
+  if (!$info['loaded']) {
+    return "twilio api library didn't load";
+  }
+  
+  $team = oncall_get_team();
+  $team_numbers = array();
+  foreach($team as $member) {
+    // add the plus (+) in front of each number
+    $team_numbers[] = "+". $member['phone'];
+  }
+  
+  $say  = "To report a problem to the on call team, press 1. ";
+  $say .= "Press 2 to connect directly with the on call team leader. ";
+  if (in_array($_REQUEST['From'], $team_numbers)) {
+    $say .= "Press 3 to leave an update of the issue status. ";
+  }
+  $say .= "Press 0 to hear these options again. ";
+  
+  $stale_time = REQUEST_TIME - variable_get('oncall_expire_status_msg', 86400);
+  $status_msg = db_select('oncall_message', 'om')
+    ->fields('om', array('message'))
+    ->condition('om.type', 'status', '=')
+    ->condition('om.created', $stale_time, '>')
+    ->range(0,1)
+    ->execute()
+    ->fetchField();
+      
+  if (!$status_msg) {
+    $status_msg = oncall_get_message('nostatus');
+  }
+  
+  $response = new Services_Twilio_Twiml();
+  $response->play(oncall_get_message('welcome'));
+  $response->play($status_msg);
+  $gather = $response->gather(array('numDigits' => 1, 'action' => '/oncall/dispatch'));
+  $gather->say($say);
+  
+  echo $response;
+  return NULL;
+}
+
+/**
+ * Twilio dispatch
+ * - our caller just told us what to do, now we do it
+ */
+function oncall_twilio_dispatch() {
+  $info = libraries_load('twilio');
+  if (!$info['loaded']) {
+    return "twilio api library didn't load";
+  }
+  
+  // if the caller pressed anything but 1, 2, or 3 send them back
+	$vals = array(1,2,3);
+	$choice = $_REQUEST['Digits'];
+	$from = $_REQUEST['From'];
+	if (!in_array($choice, $vals)) {
+    drupal_goto('oncall/connect');
+	}
+	
+	// if the caller pressed 3, confirm that they are on the 'on call' team
+	$team = oncall_get_team();
+  $team_numbers = array();
+  foreach($team as $member) {
+    // add the plus (+) in front of each number
+    $team_numbers[] = "+". $member['phone'];
+  }
+	if ($choice == 3 && !in_array($from, $team_numbers)) {
+	  drupal_goto('oncall/connect');
+	}
+  
+  // grab the on call team leader's phone number
+  $leader_phone = db_select('oncall_team', 'ot')
+    ->fields('ot', array('phone'))
+    ->condition('ot.leader', 1, '=')
+    ->execute()
+    ->fetchField();
+  
+  // build the response object
+  $response = new Services_Twilio_Twiml();
+  
+  if ($choice == 1) {
+    // leave a help message for the on call team
+    $response->say('Record the current status after the tone');
+    $response->record(array(
+      'action' => '/oncall/record/help',
+      'maxLength' => 30
+    ));
+  }
+  elseif ($choice == 2) {
+    // connect directly with the on call team leader
+    $response->dial('+'. $leader_phone);
+	  $response->say('The call failed or the remote party hung up.  Goodbye.');    
+  }
+  elseif ($choice == 3) {
+    // on call team member leaves a status update message
+    $response->say('Record the current status after the tone');
+    $response->record(array(
+      'action' => '/oncall/record/status',
+      'maxLength' => 30
+    ));
+  }
+  
+  echo $response;
+  return NULL;
+}
+
+/**
+ * handle the twilio recording
+ */
+function oncall_twilio_record($type) {
+  $message = $_REQUEST['RecordingUrl'];
+  
+  db_insert('oncall_message')
+   ->fields(array(
+    'created' => REQUEST_TIME,
+    'type' => $type,
+    'message' => $message,
+   ))
+   ->execute();  
+
+  // if $type = 'help', send an SMS to the on call team
+
+  // build the response object
+  $response = new Services_Twilio_Twiml();
+  $response->say('Your message has been received, thank you.');
+  echo $response;
+  return NULL;
+}
+
+
+/**
+ * send sms with link to 'help me' voicemail
+ */
+function oncall_send_sms() {
+  $team = oncall_get_team();
+  $txt = "A site administrator at @url has created an account for you.";
+  $data = array('@url' => 'FOOBAR');
+  echo t($txt, $data);
+} 
+
+
+/**
+ * retreive the user settings
+ */
+function oncall_user_settings($uid) {
+  return db_select('oncall_team', 'oc')
+    ->fields('oc')
+    ->condition('uid', $uid, '=')
+    ->execute()
+    ->fetchObject(); 
+}
+
+
+/**
+ * Return the URL for the requested message
+ */
+function oncall_get_message($type = 'welcome') {
+  $oncall_path = drupal_get_path('module', 'oncall') ."/sound/";
+  $msgs = array(
+    'welcome' => 'welcome.mp3',
+    'nostatus' => 'no_recent_messages.mp3'
+  );
+
+  $file_fid = variable_get('oncall_'. $type, 0);
+  if ($file_fid) {
+    $file_path = file_load($file_fid)->uri;
+    $file_url = file_create_url($file_path);
+  }
+  else {
+    $file_path = $oncall_path . $msgs[$type];
+    $file_url = url($file_path, array('absolute' => TRUE));
+  }
+  
+   return $file_url;
+} 
+
+/**
+ * Return the On Call team
+ * - only select the people who are both available and current members of the 
+ *   'on call' user roll, and who are not blocked
+ */
+function oncall_get_team() {
+  $team = &drupal_static(__FUNCTION__);
+  
+  if (!isset($team)) {
+    $query = db_select('oncall_team', 'oc');
+    $query->join('users_roles', 'ur', 'ur.uid = oc.uid');
+    $query->join('users', 'u', 'u.uid = oc.uid');
+    $query
+      ->fields('oc', array('uid', 'phone', 'leader'))
+      ->fields('u', array('name'))
+      ->condition('u.status', 1, '=')
+      ->condition('oc.available', 1, '=')
+      ->condition('ur.rid', variable_get('oncall_user_roll', -1), '=');
+
+    $result = $query->execute();
+    $team = array();
+    foreach ($result as $record) {
+      $team[] = array('uid' => $record->uid, 'name' => $record->name, 'phone' => $record->phone, 'leader' => $record->leader);
+    }
+  }
+  
+  return $team;
+}
+
+/**
+ * helper function for the oncall_config_form save handler
+ * - saves the default messages to the file system
+ */
+function oncall_save_message($file, $name) {
+  if (!empty($file->fid)) {
+    if (!$file->status) {
+
+      // Prepare the oncall directory.
+      $msg_directory =  file_default_scheme() . '://oncall';
+      file_prepare_directory($msg_directory, FILE_CREATE_DIRECTORY);
+      $destination = file_stream_wrapper_uri_normalize($msg_directory .'/'. $name .'-'. REQUEST_TIME .'.mp3');
+
+      // Move the temporary file into the final location.
+      if ($file = file_move($file, $destination, FILE_EXISTS_RENAME)) {
+        $file->status = FILE_STATUS_PERMANENT;
+        $file = file_save($file);
+        variable_set('oncall_'. $name, $file->fid);
+      }
+
+    }
+  }
+}
+
+
+
+
+
+
+
