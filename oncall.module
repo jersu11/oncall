@@ -25,6 +25,8 @@ function oncall_menu() {
   
   // drupal pages/callbacks
   $items['oncall/messages'] = array(
+    'title' => 'On Call Messages',
+    'descriptions' => 'Incoming messages from the On Call service',
     'page callback' => 'oncall_page_messages',
     'access arguments' => array('access content'),
   );
@@ -127,10 +129,11 @@ function oncall_twilio_connect() {
   }
   
   $stale_time = REQUEST_TIME - variable_get('oncall_expire_status_msg', 86400);
-  $status_msg = db_select('oncall_message', 'om')
-    ->fields('om', array('message'))
-    ->condition('om.type', 'status', '=')
-    ->condition('om.created', $stale_time, '>')
+  $status_msg = db_select('oncall_message')
+    ->fields(array('message'))
+    ->condition('type', 'status', '=')
+    ->condition('created', $stale_time, '>')
+    ->orderBy('created', 'DESC')
     ->range(0,1)
     ->execute()
     ->fetchField();
@@ -260,7 +263,7 @@ function oncall_page_messages() {
   $header = array(t('Type'), t('Date/Time'), t('Message'), t('Left By'));
   foreach ($result as $msg) {
     $dte = format_date($msg->created, 'short');
-    $audio = "<audio src='". $msg->message ."' controls preload='auto' autobuffer></audio>";
+    $audio = "<audio src='". $msg->message .".mp3' controls preload='auto' autobuffer></audio>";
     $rows[] = array($msg->type, $dte, $audio, $msg->phone);
   }
   
@@ -276,8 +279,13 @@ function oncall_page_messages() {
 function oncall_listen_message($msgid) {
   $msgurl = db_query("SELECT message FROM {oncall_message} WHERE id = :id", array(':id' => $msgid))->fetchField();
     
-  // @TODO check that msgurl is legit
-  drupal_goto($msgurl);
+  if ($msgurl) {
+    // force mp3 output for browsers
+    drupal_goto($msgurl .".mp3");
+  }
+  else {
+    return "that message doesn't exist";
+  }
 }
 
 
