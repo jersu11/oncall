@@ -484,7 +484,8 @@ function oncall_twilio_record($type) {
   // if $type = 'help', send an SMS to the on call team
   if ($type == 'help' && $msgid) {
     // instantiate a new Twilio Rest Client
-    $client = new Services_Twilio($AccountSid, $AuthToken);
+    $config = twiliophp_config_load();
+    $client = new Services_Twilio($config['account_sid'], $config['auth_token']);
  
     // make an associative array of people we know, indexed by phone number. Feel
     // free to change/add your own phone number and name here.
