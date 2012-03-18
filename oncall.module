@@ -656,14 +656,14 @@ function oncall_get_team() {
  * - prepend each number with '+' for compare with twilio's phone number params (E.164)
  */
 function oncall_get_team_numbers() {
-  $numbers = & drupal_static(__FUNCTION__);
+  $numbers = &drupal_static(__FUNCTION__);
   
   if (!isset($numbers)) {
     $team = oncall_get_team();
-    $team_numbers = array();
+    $numbers = array();
     foreach($team as $member) {
       // add the plus (+) in front of each number
-      $team_numbers[] = "+". $member['phone'];
+      $numbers[] = "+". $member['phone'];
     }
   }
   
