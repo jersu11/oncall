@@ -46,8 +46,10 @@ function oncall_uninstall() {
   foreach ($results as $result) {
     variable_del($result->name);
   }
-
-  user_role_delete('on call');
+  
+  if (user_role_load_by_name('on call')) {
+    user_role_delete('on call');
+  }
 }
 
 
