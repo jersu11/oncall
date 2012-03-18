@@ -100,6 +100,12 @@ function oncall_schema() {
   $schema['oncall_message'] = array(
     'description' => 'Table to track the voice mail messages left in the system',
     'fields' => array(
+      'id' => array(
+        'type' => 'serial',
+        'unsigned' => TRUE, 
+        'not null' => TRUE, 
+        'description' => 'A message identifier',
+      ),
       'created' => array(
         'type' => 'int', 
         'not null' => TRUE, 
@@ -119,8 +125,11 @@ function oncall_schema() {
         'description' => 'URL of the message.',
       ), 
     ),
-    'primary key' => array('created'),
-    'indexes' => array('type' => array('type')),
+    'primary key' => array('id'),
+    'indexes' => array(
+      'type' => array('type'),
+      'created' => array('created'),
+    ),
   );
 
   return $schema;
