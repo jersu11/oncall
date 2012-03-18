@@ -465,6 +465,11 @@ function oncall_twilio_dispatch() {
  * handle the twilio recording
  */
 function oncall_twilio_record($type) {
+  $info = libraries_load('twilio-php');
+  if (!$info['loaded']) {
+    return "twilio api library didn't load";
+  }
+  
   $message = $_REQUEST['RecordingUrl'];
   
   db_insert('oncall_message')
