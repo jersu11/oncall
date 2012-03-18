@@ -124,6 +124,13 @@ function oncall_schema() {
         'not null' => TRUE, 
         'description' => 'URL of the message.',
       ), 
+      'phone' => array(
+        'type' => 'varchar', 
+        'length' => 64, 
+        'not null' => TRUE, 
+        'default' => '', 
+        'description' => 'The phone number that left the message',
+      ), 
     ),
     'primary key' => array('id'),
     'indexes' => array(

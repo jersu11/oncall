@@ -2,10 +2,10 @@
 
 
 /**
- * Implements hook_menu()
+ * hook_menu()
  */
 function oncall_menu() {
-  // define the twilio endpoints
+  // twilio endpoints
   $items['oncall/connect'] = array(
     'page callback' => 'oncall_twilio_connect',
     'access arguments' => array('access content'),
@@ -23,7 +23,19 @@ function oncall_menu() {
     'type' => MENU_CALLBACK,
   );
   
-  // define the admin pages
+  // drupal pages/callbacks
+  $items['oncall/messages'] = array(
+    'page callback' => 'oncall_page_messages',
+    'access arguments' => array('access content'),
+  );
+  $items['oncall/listen/%'] = array(
+    'page callback' => 'oncall_listen_message',
+    'page arguments' => array(2),
+    'access arguments' => array('access content'),
+    'type' => MENU_CALLBACK,
+  );
+  
+  // admin pages
   $items['admin/config/services/oncall'] = array(
     'title' => 'On Call Config Page',
     'description' => 'Configure the site description, the number of items per feed and whether feeds should be titles/teasers/full-text.',
@@ -45,9 +57,8 @@ function oncall_menu() {
   return $items;
 }
 
-
 /**
- * Implements hook_perm().
+ * hook_perm().
  */
 function oncall_permission() {
   return array(
@@ -59,8 +70,224 @@ function oncall_permission() {
 
 
 /**
+ * ##############################
+ *     MENU HANDLERS
+ * ##############################
+ */
+
+/**
+ * oncall config page
+ */
+function oncall_page_config() {
+  $rows = array();
+  $header = array(t('Person'), t('Phone Number'), t('Point Person'));
+  foreach (oncall_get_team() as $member) {
+    $lead = ($member['leader'] == 1) ? 'Yes' : 'No';
+    $rows[] = array(l($member['name'], 'user/'. $member['uid']), $member['phone'], $lead);
+  }
+  
+  $out  = "<h3>The On Call Team</h3>";
+  $out .= theme('table', array('header' => $header, 'rows' => $rows));
+  $out .= drupal_render(drupal_get_form('oncall_config_form'));
+  
+  return $out;
+}
+
+/**
+ * Twilio initial greeting and phone tree
+ * - welcome the caller and give them options
+ */
+function oncall_twilio_connect() {
+  $info = libraries_load('twilio-php');
+  if (!$info['loaded']) {
+    return "twilio api library didn't load";
+  }
+  
+  $team_numbers = oncall_get_team_numbers();
+  $team_leader = oncall_get_team_leader();
+  $say = "";
+  
+  // opt 1
+  if (count($team_numbers)) {
+    $say .= "To report a problem to the on call team, press 1. ";
+  }
+  
+  // opt 2
+  if ($team_leader) {
+    $say .= "Press 2 to connect directly with the on call team leader. ";
+  }
+  
+  // opt 3
+  if (in_array($_REQUEST['From'], $team_numbers)) {
+    $say .= "Press 3 to leave an update of the issue status. ";
+  }
+  
+  if ($say) {
+    $say .= "Press 0 to hear these options again. ";
+  }
+  
+  $stale_time = REQUEST_TIME - variable_get('oncall_expire_status_msg', 86400);
+  $status_msg = db_select('oncall_message', 'om')
+    ->fields('om', array('message'))
+    ->condition('om.type', 'status', '=')
+    ->condition('om.created', $stale_time, '>')
+    ->range(0,1)
+    ->execute()
+    ->fetchField();
+      
+  if (!$status_msg) {
+    $status_msg = oncall_get_message('nostatus');
+  }
+  
+  // create the output 
+  $response = new Services_Twilio_Twiml();
+  $response->play(oncall_get_message('welcome'));
+  
+  if ($say) {
+    $response->play($status_msg);
+    $gather = $response->gather(array('numDigits' => 1, 'action' => '/oncall/dispatch'));
+    $gather->say($say);
+  }
+  else {
+    $response->say("There are currently no available members of the on call team. Sorry. Good bye.");
+  }
+  
+  echo $response;
+  return NULL;
+}
+
+/**
+ * Twilio dispatch
+ * - our caller just told us what to do, now we do it
+ */
+function oncall_twilio_dispatch() {
+  $info = libraries_load('twilio-php');
+  if (!$info['loaded']) {
+    return "twilio api library didn't load";
+  }
+  
+  // if the caller pressed anything but 1, 2, or 3 send them back
+	$vals = array(1,2,3);
+	$choice = $_REQUEST['Digits'];
+	$from = $_REQUEST['From'];
+	if (!in_array($choice, $vals)) {
+    drupal_goto('oncall/connect');
+	}
+	
+	// if the caller press 2, confirm that a leader is available
+  $leader_phone = oncall_get_team_leader();
+  if ($choice == 2 && !$leader_phone) {
+    drupal_goto('oncall/connect');
+  }
+	
+	// if the caller pressed 3, confirm that they are on the 'on call' team
+  $team_numbers = oncall_get_team_numbers();
+	if ($choice == 3 && !in_array($from, $team_numbers)) {
+	  drupal_goto('oncall/connect');
+	}
+    
+  // build the response object
+  $response = new Services_Twilio_Twiml();
+  
+  if ($choice == 1) {
+    // leave a help message for the on call team
+    $response->say('Record the current status after the tone');
+    $response->record(array(
+      'action' => '/oncall/record/help',
+      'maxLength' => 30
+    ));
+  }
+  elseif ($choice == 2) {
+    // connect directly with the on call team leader
+    $response->dial('+'. $leader_phone);
+	  $response->say('The call failed or the remote party hung up.  Goodbye.');    
+  }
+  elseif ($choice == 3) {
+    // on call team member leaves a status update message
+    $response->say('Record the current status after the tone');
+    $response->record(array(
+      'action' => '/oncall/record/status',
+      'maxLength' => 30
+    ));
+  }
+  
+  echo $response;
+  return NULL;
+}
+
+/**
+ * Twilio recording redirect
+ * - store the url of the recording in our database
+ */
+function oncall_twilio_record($type) {
+  $info = libraries_load('twilio-php');
+  if (!$info['loaded']) {
+    return "twilio api library didn't load";
+  }
+  
+  $msgid = 0;
+  if ($message = $_REQUEST['RecordingUrl']) {
+    $msgid = db_insert('oncall_message')
+     ->fields(array(
+      'created' => REQUEST_TIME,
+      'type' => $type,
+      'message' => $message,
+      'phone' => $_REQUEST['From'],
+     ))
+     ->execute();  
+  }
+
+  // if $type = 'help', send an SMS to the on call team
+  if ($type == 'help' && $msgid) {
+    oncall_send_sms_listen($msgid);
+  }
+
+  // build the response object
+  $response = new Services_Twilio_Twiml();
+  $response->say('Your message has been received, thank you.');
+  echo $response;
+  return NULL;
+}
+
+/**
+ * list all the incoming messages on a page
+ */
+function oncall_page_messages() {
+  // @TODO make this a pager query
+  $result = db_query("SELECT type, created, message, phone FROM {oncall_message} ORDER BY created DESC");
+  
+  $rows = array();
+  $header = array(t('Type'), t('Date/Time'), t('Message'), t('Left By'));
+  foreach ($result as $msg) {
+    $dte = format_date($msg->created, 'short');
+    $audio = "<audio src='". $msg->message ."' controls preload='auto' autobuffer></audio>";
+    $rows[] = array($msg->type, $dte, $audio, $msg->phone);
+  }
+  
+  $out  = "<h3>On Call Messages</h3>";
+  $out .= theme('table', array('header' => $header, 'rows' => $rows));
+
+  return $out;
+}
+
+/**
+ * redirect to a twilio recording
+ */
+function oncall_listen_message($msgid) {
+  $msgurl = db_query("SELECT message FROM {oncall_message} WHERE id = :id", array(':id' => $msgid))->fetchField();
+    
+  // @TODO check that msgurl is legit
+  drupal_goto($msgurl);
+}
+
+
+/* #################################
+ *    FORMS and FORM HANDLERS
+ * #################################
+ * cluster all these things togother
+ */
+/**
  * hook_form_alter()
- *
  * add telephone number and availability to user edit page
  */
 function oncall_form_alter(&$form, &$form_state, $form_id) {
@@ -155,26 +382,6 @@ function oncall_user_form_submit($form, &$form_state) {
   }
 } 
 
-
-/**
- * oncall config page
- */
-function oncall_page_config() {
-  $rows = array();
-  $header = array(t('Person'), t('Phone Number'), t('Point Person'));
-  foreach (oncall_get_team() as $member) {
-    $lead = ($member['leader'] == 1) ? 'Yes' : 'No';
-    $rows[] = array(l($member['name'], 'user/'. $member['uid']), $member['phone'], $lead);
-  }
-  
-  $out  = "<h3>The On Call Team</h3>";
-  $out .= theme('table', array('header' => $header, 'rows' => $rows));
-  $out .= drupal_render(drupal_get_form('oncall_config_form'));
-  
-  return $out;
-}
-
-
 /**
  * oncall config main settings
  */
@@ -196,8 +403,9 @@ function oncall_config_form($form, &$form_state) {
     '#title' => t('On Call Point Person'), 
     '#default_value' => $leader, 
     '#options' => $team_select, 
+    '#empty_option' => t('No Leader'), 
     '#tree' => FALSE, 
-    '#description' => t('Select the person who is leading the team. This person may be contacted directly through the On Call service.'),
+    '#description' => t('Select the person who is leading the team. A caller to this service is given the option to connect directly to the leader. If no leader is selected, the direct connect option is not available.'),
   );
   
   // sms message
@@ -291,13 +499,12 @@ function oncall_config_form_submit($form, &$form_state) {
   variable_set('oncall_sms_msg', $form_state['values']['oncall_sms']);
 
   $welcome_msg = $form_state['values']['oncall_welcome'];
-  oncall_save_message($welcome_msg, 'welcome');
+  oncall_save_uploaded_message($welcome_msg, 'welcome');
 
   $nostatus_msg = $form_state['values']['oncall_nostatus'];
-  oncall_save_message($nostatus_msg, 'nostatus');
+  oncall_save_uploaded_message($nostatus_msg, 'nostatus');
   
 }
-
 
 /**
  * oncall config extra settings - set additional variables
@@ -335,8 +542,7 @@ function oncall_config_extra_form($form, &$form_state) {
     '#description' => t('Should the phone number entered by team members be validated? And if so, what country phone number pattern should it be validated against?'),
   );
 
-  // times are 6 hours, 12 hours, 18 hours, 1 day, 2 days, 1 week
-  // 6 hours = 6*60*60 = 21600
+  // times are 6 hours, 12 hours, 18 hours, 1 day, 2 days, 1 week --- 6 hours = 6*60*60 = 21600
   $form['oncall_expire_status_msg'] = array(
     '#type' => 'select', 
     '#title' => t('Status Message Expiration'), 
@@ -350,188 +556,37 @@ function oncall_config_extra_form($form, &$form_state) {
 }
 
 
-/**
- * build the initial greeting and phone tree
+
+
+/* #############################
+ *     HELPER FUNCTIONS
+ * #############################
+ * functions that assist in the operation of the module
  */
-function oncall_twilio_connect() {
-  $info = libraries_load('twilio-php');
-  if (!$info['loaded']) {
-    return "twilio api library didn't load";
-  }
-  
-  $team = oncall_get_team();
-  $team_numbers = array();
-  foreach($team as $member) {
-    // add the plus (+) in front of each number
-    $team_numbers[] = "+". $member['phone'];
-  }
-  
-  $say  = "To report a problem to the on call team, press 1. ";
-  $say .= "Press 2 to connect directly with the on call team leader. ";
-  if (in_array($_REQUEST['From'], $team_numbers)) {
-    $say .= "Press 3 to leave an update of the issue status. ";
-  }
-  $say .= "Press 0 to hear these options again. ";
-  
-  $stale_time = REQUEST_TIME - variable_get('oncall_expire_status_msg', 86400);
-  $status_msg = db_select('oncall_message', 'om')
-    ->fields('om', array('message'))
-    ->condition('om.type', 'status', '=')
-    ->condition('om.created', $stale_time, '>')
-    ->range(0,1)
-    ->execute()
-    ->fetchField();
-      
-  if (!$status_msg) {
-    $status_msg = oncall_get_message('nostatus');
-  }
-  
-  $response = new Services_Twilio_Twiml();
-  $response->play(oncall_get_message('welcome'));
-  $response->play($status_msg);
-  $gather = $response->gather(array('numDigits' => 1, 'action' => '/oncall/dispatch'));
-  $gather->say($say);
-  
-  echo $response;
-  return NULL;
-}
-
-/**
- * Twilio dispatch
- * - our caller just told us what to do, now we do it
- */
-function oncall_twilio_dispatch() {
-  $info = libraries_load('twilio-php');
-  if (!$info['loaded']) {
-    return "twilio api library didn't load";
-  }
-  
-  // if the caller pressed anything but 1, 2, or 3 send them back
-	$vals = array(1,2,3);
-	$choice = $_REQUEST['Digits'];
-	$from = $_REQUEST['From'];
-	if (!in_array($choice, $vals)) {
-    drupal_goto('oncall/connect');
-	}
-	
-	// if the caller pressed 3, confirm that they are on the 'on call' team
-	$team = oncall_get_team();
-  $team_numbers = array();
-  foreach($team as $member) {
-    // add the plus (+) in front of each number
-    $team_numbers[] = "+". $member['phone'];
-  }
-	if ($choice == 3 && !in_array($from, $team_numbers)) {
-	  drupal_goto('oncall/connect');
-	}
-  
-  // grab the on call team leader's phone number
-  $leader_phone = db_select('oncall_team', 'ot')
-    ->fields('ot', array('phone'))
-    ->condition('ot.leader', 1, '=')
-    ->execute()
-    ->fetchField();
-  
-  // build the response object
-  $response = new Services_Twilio_Twiml();
-  
-  if ($choice == 1) {
-    // leave a help message for the on call team
-    $response->say('Record the current status after the tone');
-    $response->record(array(
-      'action' => '/oncall/record/help',
-      'maxLength' => 30
-    ));
-  }
-  elseif ($choice == 2) {
-    // connect directly with the on call team leader
-    $response->dial('+'. $leader_phone);
-	  $response->say('The call failed or the remote party hung up.  Goodbye.');    
-  }
-  elseif ($choice == 3) {
-    // on call team member leaves a status update message
-    $response->say('Record the current status after the tone');
-    $response->record(array(
-      'action' => '/oncall/record/status',
-      'maxLength' => 30
-    ));
-  }
-  
-  echo $response;
-  return NULL;
-}
-
-/**
- * handle the twilio recording
- */
-function oncall_twilio_record($type) {
-  $info = libraries_load('twilio-php');
-  if (!$info['loaded']) {
-    return "twilio api library didn't load";
-  }
-  
-  $msgid = 0;
-  if ($message = $_REQUEST['RecordingUrl']) {
-    $msgid = db_insert('oncall_message')
-     ->fields(array(
-      'created' => REQUEST_TIME,
-      'type' => $type,
-      'message' => $message,
-     ))
-     ->execute();  
-  }
-
-  // if $type = 'help', send an SMS to the on call team
-  if ($type == 'help' && $msgid) {
-    // instantiate a new Twilio Rest Client
-    $config = twiliophp_config_load();
-    $client = new Services_Twilio($config['account_sid'], $config['auth_token']);
- 
-    // make an associative array of people we know, indexed by phone number. Feel
-    // free to change/add your own phone number and name here.
-	  $team = oncall_get_team();
-    $team_numbers = array();
-    foreach($team as $member) {
-      // add the plus (+) in front of each number
-      $team_numbers[] = "+". $member['phone'];
-    }
- 
-    // iterate over all our friends. $number is a phone number above, and $name 
-    // is the name next to it
-    foreach ($team_numbers as $number) {
- 
-      // Send a new outgoing SMS */
-      $sms = $client->account->sms_messages->create(
-        // the number we are sending from, must be a valid Twilio number
-        variable_get('oncall_phone_number', ''), 
- 
-        // the number we are sending to - Any phone number
-        $number,
- 
-        // the sms body
-        "A help message has been left, ID:$msgid"
-      );
-    }
-  }
-
-  // build the response object
-  $response = new Services_Twilio_Twiml();
-  $response->say('Your message has been received, thank you.');
-  echo $response;
-  return NULL;
-}
-
 
 /**
  * send sms with link to 'help me' voicemail
  */
-function oncall_send_sms() {
-  $team = oncall_get_team();
-  $txt = "A site administrator at @url has created an account for you.";
-  $data = array('@url' => 'FOOBAR');
-  echo t($txt, $data);
-} 
+function oncall_send_sms_listen($msgid) {
+  $msg = variable_get('oncall_sms_msg', 'A new help request has been received. Listen here @url');
+  $msg_data = array('@url' => url('oncall/listen/'. $msgid, array('absolute' => TRUE)));
 
+  // Twilio Rest Client
+  $config = twiliophp_config_load();
+  $client = new Services_Twilio($config['account_sid'], $config['auth_token']);
+ 
+  // get the team's phone numbers. 
+  $team_numbers = oncall_get_team_numbers();
+ 
+  // send an sms to everyone on the team
+  foreach ($team_numbers as $number) {
+    $sms = $client->account->sms_messages->create(
+      variable_get('oncall_phone_number', ''),  // from our twilio number
+      $number,                                  // send to our team member
+      t($msg, $msg_data)                        // the sms message
+    );
+  }
+} 
 
 /**
  * retreive the user settings
@@ -544,9 +599,8 @@ function oncall_user_settings($uid) {
     ->fetchObject(); 
 }
 
-
 /**
- * Return the URL for the requested message
+ * Return the URL for the requested 'canned' message
  */
 function oncall_get_message($type = 'welcome') {
   $oncall_path = drupal_get_path('module', 'oncall') ."/sound/";
@@ -598,10 +652,42 @@ function oncall_get_team() {
 }
 
 /**
+ * Return just the phone numbers for the On Call team
+ * - prepend each number with '+' for compare with twilio's phone number params (E.164)
+ */
+function oncall_get_team_numbers() {
+  $numbers = & drupal_static(__FUNCTION__);
+  
+  if (!isset($numbers)) {
+    $team = oncall_get_team();
+    $team_numbers = array();
+    foreach($team as $member) {
+      // add the plus (+) in front of each number
+      $team_numbers[] = "+". $member['phone'];
+    }
+  }
+  
+  return $numbers;
+}
+
+/**
+ * Return the phone number for the team leader
+ * - return false if no team leader selected
+ */
+function oncall_get_team_leader() {
+  if ($leader_phone = db_query("SELECT phone FROM {oncall_team} WHERE leader = 1")->fetchField()) {
+    return "+".$leader_phone;
+  }
+  else {
+    return FALSE;
+  }
+}
+
+/**
  * helper function for the oncall_config_form save handler
  * - saves the default messages to the file system
  */
-function oncall_save_message($file, $name) {
+function oncall_save_uploaded_message($file, $name) {
   if (!empty($file->fid)) {
     if (!$file->status) {
 
@@ -620,7 +706,6 @@ function oncall_save_message($file, $name) {
     }
   }
 }
-
 
 
 
