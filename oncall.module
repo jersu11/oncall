@@ -274,6 +274,11 @@ function oncall_twilio_record($type) {
  * - redirect incoming SMS to everyone on on call team
  */
 function oncall_twilio_sms() {
+  $info = libraries_load('twilio-php');
+  if (!$info['loaded']) {
+    return "twilio api library didn't load";
+  }
+  
   $phone_number = variable_get('oncall_phone_number', '');
 	$from = $_REQUEST['From'];
   $msg = $_REQUEST['Body'];
@@ -326,10 +331,7 @@ function oncall_page_messages() {
     $rows[] = array($msg->type, $dte, $audio, $msg->phone);
   }
   
-  $out  = "<h3>On Call Messages</h3>";
-  $out .= theme('table', array('header' => $header, 'rows' => $rows));
-
-  return $out;
+  return theme('table', array('header' => $header, 'rows' => $rows));
 }
 
 /**
