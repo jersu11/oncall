@@ -22,6 +22,11 @@ function oncall_menu() {
     'access arguments' => array('access content'),
     'type' => MENU_CALLBACK,
   );
+  $items['oncall/sms'] = array(
+    'page callback' => 'oncall_twilio_sms',
+    'access arguments' => array('access content'),
+    'type' => MENU_CALLBACK,
+  );
   
   // drupal pages/callbacks
   $items['oncall/messages'] = array(
@@ -69,6 +74,18 @@ function oncall_permission() {
     'oncall help message' => array('title' => t('Leave Help Message'), 'description' => t('Using the telephone, allow users to contact the On Call team and leave a \'help us\' message')),
   );
 }
+
+/**
+ * hook_theme()
+ */
+function oncall_theme() {
+  return array(
+    'oncall_audio' => array(
+      'variables' => array('src' => NULL),
+    ),
+  );
+}
+
 
 
 /**
@@ -253,6 +270,48 @@ function oncall_twilio_record($type) {
 }
 
 /**
+ * Twilio SMS 
+ * - redirect incoming SMS to everyone on on call team
+ */
+function oncall_twilio_sms() {
+  $phone_number = variable_get('oncall_phone_number', '');
+	$from = $_REQUEST['From'];
+  $msg = $_REQUEST['Body'];
+  
+	// Twilio Rest Client
+  $config = twiliophp_config_load();
+  $client = new Services_Twilio($config['account_sid'], $config['auth_token']);
+  
+  $team_numbers = oncall_get_team_numbers();
+	if (!in_array($from, $team_numbers)) {
+    
+    // only team members can send to this number. if they are not on the team, return a 'sorry' note
+    $msg = "Sorry, only on call team members may send SMS messages on this service";
+    $sms = $client->account->sms_messages->create(
+      $phone_number,  // from our twilio number
+      $from,          // return to sender
+      $msg            // the sms sorry message
+    );
+    
+	}
+	else {
+  
+    // send an sms to everyone on the team
+    foreach ($team_numbers as $number) {
+      if ($number != $from ) {
+        $sms = $client->account->sms_messages->create(
+          $phone_number,  // from our twilio number
+          $number,        // send to our team member
+          $msg            // the sms message
+        );
+      }
+    }
+  }
+
+  return NULL;
+}
+
+/**
  * list all the incoming messages on a page
  */
 function oncall_page_messages() {
@@ -263,7 +322,7 @@ function oncall_page_messages() {
   $header = array(t('Type'), t('Date/Time'), t('Message'), t('Left By'));
   foreach ($result as $msg) {
     $dte = format_date($msg->created, 'short');
-    $audio = "<audio src='". $msg->message .".mp3' controls preload='auto' autobuffer></audio>";
+    $audio = theme('oncall_audio', array('src' => $msg->message .'.mp3'));
     $rows[] = array($msg->type, $dte, $audio, $msg->phone);
   }
   
@@ -431,7 +490,7 @@ function oncall_config_form($form, &$form_state) {
     '#title' => t('Welcome Message'), 
   );
   $form['welcome']['welcome_current'] = array(
-    '#markup' => "<audio src='". oncall_get_message('welcome') ."' controls preload='auto' autobuffer></audio>",
+    '#markup' => theme('oncall_audio', array('src' => oncall_get_message('welcome'))),
   );
   $form['welcome']['oncall_welcome'] = array(
     '#type' => 'file',
@@ -445,7 +504,7 @@ function oncall_config_form($form, &$form_state) {
     '#title' => t('No New Status Message'), 
   );
   $form['nostatus']['nostatus_current'] = array(
-    '#markup' => "<audio src='". oncall_get_message('nostatus') ."' controls preload='auto' autobuffer></audio>", 
+    '#markup' => theme('oncall_audio', array('src' => oncall_get_message('nostatus'))), 
   );
   $form['nostatus']['oncall_nostatus'] = array(
     '#type' => 'file',
@@ -715,8 +774,20 @@ function oncall_save_uploaded_message($file, $name) {
   }
 }
 
+/**
+ * theme audio tag
+ * - html5 audio tag. if browser doesn't support native mp3 playback, it should show a link to the file
+ */
+function theme_oncall_audio($variables) {
+  $src = $variables['src'];
+  
+  $out  = "<audio controls preload='auto' autobuffer>";
+  $out .= "<source src='". $src ."' type='audio/mp3' />";
+  $out .= "<a href='". $src ."'>Source MP3</a>";
+  $out .= "</audio>";
 
-
+  return $out;
+}
 
 
 
