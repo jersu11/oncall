@@ -146,11 +146,11 @@ function oncall_twilio_connect() {
   }
   
   $stale_time = REQUEST_TIME - variable_get('oncall_expire_status_msg', 86400);
-  $status_msg = db_select('oncall_message')
-    ->fields(array('message'))
-    ->condition('type', 'status', '=')
-    ->condition('created', $stale_time, '>')
-    ->orderBy('created', 'DESC')
+  $status_msg = db_select('oncall_message', 'om')
+    ->fields('om', array('message'))
+    ->condition('om.type', 'status', '=')
+    ->condition('om.created', $stale_time, '>')
+    ->orderBy('om.created', 'DESC')
     ->range(0,1)
     ->execute()
     ->fetchField();
