@@ -81,8 +81,8 @@ function oncall_permission() {
       'description' => t('Allow users to modify the On Call settings')
     ),
     'oncall access messages' => array(
-      'title' => t('Leave Status Message'), 
-      'description' => t('Using the telephone, allow users to leave a status message')
+      'title' => t('Access Status Messages'), 
+      'description' => t('View and listen to all incoming messages')
     ),
     
     // By design, a very open permision, that simply lets one interact with the service.
