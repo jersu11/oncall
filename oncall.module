@@ -270,7 +270,7 @@ function oncall_twilio_record($type) {
 
 /**
  * Twilio SMS 
- * - Echo incoming SMS messages to everyone on on call team. Only team members
+ * - Echo incoming SMS messages to everyone on the 'on call' team. Only team members
  *   can send SMS messages
  */
 function oncall_twilio_sms() {
@@ -282,7 +282,6 @@ function oncall_twilio_sms() {
   $team_numbers = oncall_get_team_numbers();
   
   // Twilio Rest Client
-  $config = twiliophp_config_load();
   $client = new Services_Twilio($twilio_conf['account_sid'], $twilio_conf['auth_token']);
   
   if (!in_array($from, $team_numbers)) {
@@ -425,10 +424,10 @@ function oncall_form_alter(&$form, &$form_state, $form_id) {
     
     $form['oncall']['oc_active'] = array(
       '#type' => 'radios',
-      '#title' => t('OnCall Availability'),
+      '#title' => t('On Call Availability'),
       '#default_value' => isset($oncall_user->active) ? $oncall_user->active : 1,
       '#options' => array(0 => t('Away'), 1 => t('Available')),
-      '#description' => t('When set to "Available", sms messages from the OnCall service may be sent to the telephone number given above.'),
+      '#description' => t('When set to "Available", sms messages from the On Call service may be sent to the telephone number given above.'),
     );
 
     $form['#validate'][] = 'oncall_user_form_validate';
@@ -597,7 +596,7 @@ function oncall_config_form_validate($form, &$form_state) {
     $form_state['values']['oncall_welcome'] = $welcome;
   }
 
-  // Save the 'welcome' message as a temporary file.
+  // Save the 'no status' message as a temporary file.
   $nostatus = file_save_upload('oncall_nostatus', $validators);
   if ($nostatus === FALSE) {
     form_set_error('oncall_nostatus', t('Not able to save that file. Make sure your files directory is writeable and that the file is an MP3'));
