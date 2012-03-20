@@ -6,9 +6,10 @@
  * @author Jeremy Sullivan ("jersu", http://drupal.org/user/47878)
  */
 
-
 /**
  * Implements hook_install().
+ *  - make a new user role named 'on call'
+ *  - grant some permissions to the new role
  */
 function oncall_install() {
   // make the default 'on call' user role
@@ -20,25 +21,23 @@ function oncall_install() {
   // track the 'on call' user roll
   variable_set('oncall_user_roll', $role->rid);
 
-  // Permissions to assign to the role.
+  // permissions to assign to the role.
   $perms = array(
-    'oncall status message',
-    'oncall help message',
+    'oncall access messages',
+    'oncall connect',
   );
 
-  // Grant the permissions. 
+  // grant the permissions. 
   user_role_grant_permissions($role->rid, $perms); 
-  user_role_grant_permissions(1, array('oncall help message'));
-  user_role_grant_permissions(2, array('oncall help message'));
-  
+  user_role_grant_permissions(1, array('oncall connect'));
+  user_role_grant_permissions(2, array('oncall connect'));
 }
-
 
 /**
  * Implements hook_uninstall().
+ *  - remove all oncall variables.
  */
 function oncall_uninstall() {
-  // Remove all variables.
   $results = db_select('variable', 'v')
     ->fields('v', array('name'))
     ->condition('name', 'oncall%', 'LIKE')
@@ -52,9 +51,10 @@ function oncall_uninstall() {
   }
 }
 
-
 /**
  * hook_schema()
+ *  - oncall_team : tracks team members
+ *  - oncall_message : tracks incoming voice messages
  */
 function oncall_schema() {
   $schema['oncall_team'] = array(
