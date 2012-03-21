@@ -23,3 +23,6 @@ A typical workflow might look like this:
 ## Install ##
 This module requires the Twilio API for PHP module which can be found here: [https://github.com/jersu11/twiliophp](https://github.com/jersu11/twiliophp)
 
+## Changelog ##
+This module now drops its dependence on the Drupal User interface and manages the 'on call' team from within the module's administrative interface (on next checkin)
+
