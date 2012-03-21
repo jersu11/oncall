@@ -60,11 +60,24 @@ function oncall_schema() {
   $schema['oncall_team'] = array(
     'description' => 'Table that tracks the members of the oncall team', 
     'fields' => array(
+      'ocid' => array(
+        'type' => 'serial',
+        'unsigned' => TRUE, 
+        'not null' => TRUE, 
+        'description' => 'A unique On Call team member id',
+      ),
       'uid' => array(
         'type' => 'int', 
         'not null' => TRUE, 
         'default' => 0, 
         'description' => 'The {users}.uid of the oncall team member',
+      ), 
+      'name' => array(
+        'type' => 'varchar', 
+        'length' => 64, 
+        'not null' => TRUE, 
+        'default' => '', 
+        'description' => 'The team member\'s name',
       ), 
       'phone' => array(
         'type' => 'varchar', 
@@ -90,7 +103,7 @@ function oncall_schema() {
         'description' => 'Tracks whether this person is the team leader; ranges from 0 (Nope) to 1 (Yep)',
       ), 
     ), 
-    'primary key' => array('uid'), 
+    'primary key' => array('ocid'), 
     'indexes' => array(
       'available' => array('available'), 
       'leader' => array('leader'),
@@ -100,11 +113,11 @@ function oncall_schema() {
   $schema['oncall_message'] = array(
     'description' => 'Table to track the voice mail messages left in the system',
     'fields' => array(
-      'id' => array(
-        'type' => 'serial',
-        'unsigned' => TRUE, 
+      'msgid' => array(
+        'type' => 'varchar',
+        'length' => 64, 
         'not null' => TRUE, 
-        'description' => 'A message identifier',
+        'description' => 'A unique message identifier',
       ),
       'created' => array(
         'type' => 'int', 
@@ -132,7 +145,7 @@ function oncall_schema() {
         'description' => 'The phone number that left the message',
       ), 
     ),
-    'primary key' => array('id'),
+    'primary key' => array('msgid'),
     'indexes' => array(
       'type' => array('type'),
       'created' => array('created'),
