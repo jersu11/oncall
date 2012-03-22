@@ -323,12 +323,14 @@ function oncall_twilio_sms() {
   else {
   
     // send an sms to everyone on the team
-    foreach ($team_numbers as $name => $number) {
+    $team_names = array_flip($team_numbers);
+    $name = $team_names[$from];
+    foreach ($team_numbers as $number) {
       if ($number != $from ) {
         $sms = $client->account->sms_messages->create(
           $phone_number,      // from our twilio number
           $number,            // send to our team member
-          $msg . " ~" . $name // the sms message appended with team member name
+          $msg . " ~" . $name // the sms message appended with the name of team member who sent it
         );
       }
     }
@@ -344,15 +346,20 @@ function oncall_twilio_sms() {
  *  - the list diferentiates 'help' messages and 'status' messages left by the team
  */
 function oncall_page_messages() {
+  // get the team names/numbers. if a status message was left by a team member, we display their name
+  $team_numbers = oncall_get_team_numbers();
+  $team_names = array_flip($team_numbers);
+
   // @TODO make this a pager query
   $result = db_query("SELECT type, created, message, phone FROM {oncall_message} ORDER BY created DESC");
   
   $rows = array();
   $header = array(t('Type'), t('Date/Time'), t('Message'), t('Left By'));
   foreach ($result as $msg) {
+    $left_by = ($team_names[$msg->phone]) ? $team_names[$msg->phone] : $msg->phone;
     $dte = format_date($msg->created, 'short');
     $audio = theme('oncall_audio', array('src' => $msg->message . '.mp3'));
-    $rows[] = array($msg->type, $dte, $audio, $msg->phone);
+    $rows[] = array($msg->type, $dte, $audio, $left_by);
   }
   
   return theme('table', array('header' => $header, 'rows' => $rows));
