@@ -42,8 +42,7 @@ function oncall_menu() {
     'page callback'      => 'oncall_page_messages',
     'access arguments'   => array('oncall access messages'),
   );
-  $items['oc/l/%'] = array(
-    // short url - oc/l/% => oncall/listen/%msgid
+  $items['oc/l/%'] = array( // short for "oncall/listen/%msgid"
     'page callback'      => 'oncall_listen_message',
     'page arguments'     => array(2),
     'access arguments'   => array('oncall connect'),
@@ -71,6 +70,23 @@ function oncall_menu() {
     'weight'             => 2,
     'type'               => MENU_LOCAL_TASK,
   );
+  $items['admin/config/services/oncall/member/add'] = array(
+    'title'              => 'Add an On Call Team Member',
+    'page callback'      => 'drupal_get_form',
+    'page arguments'     => array('oncall_member_edit_form'),
+    'access arguments'   => array('oncall admin'),
+    'file'               => 'oncall.admin.inc',
+    'type'               => MENU_CALLBACK,
+  );
+  $items['admin/config/services/oncall/member/edit/%'] = array(
+    'title'              => 'Edit an On Call Team Member',
+    'page callback'      => 'drupal_get_form',
+    'page arguments'     => array('oncall_member_edit_form', 6),
+    'access arguments'   => array('oncall admin'),
+    'file'               => 'oncall.admin.inc',
+    'type'               => MENU_CALLBACK,
+  );
+  
   return $items;
 }
 
@@ -426,19 +442,10 @@ function oncall_get_team() {
   $team = &drupal_static(__FUNCTION__);
   
   if (!isset($team)) {
-    $q  = "SELECT oc.uid, oc.phone, oc.leader, u.name ";
-    $q .= "FROM {oncall_team} oc ";
-    $q .= "JOIN {users_roles} ur ON ur.uid = oc.uid ";
-    $q .= "JOIN {users} u ON u.uid = oc.uid ";
-    $q .= "WHERE u.status = 1 ";
-    $q .= "  AND oc.available = 1 ";
-    $q .= "  AND ur.rid = :rid ";
-    $args = array(":rid" => variable_get('oncall_user_roll', -1));
-    
-    $result = db_query($q, $args);
+    $result = db_query("SELECT * FROM {oncall_team} WHERE available = 1");
     $team = array();
     foreach ($result as $record) {
-      $team[] = array('uid' => $record->uid, 'name' => $record->name, 'phone' => $record->phone, 'leader' => $record->leader);
+      $team[] = array('ocid' => $record->ocid, 'name' => $record->name, 'phone' => $record->phone, 'leader' => $record->leader);
     }
   }
   

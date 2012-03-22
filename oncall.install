@@ -7,33 +7,6 @@
  */
 
 /**
- * Implements hook_install().
- *  - make a new user role named 'on call'
- *  - grant some permissions to the new role
- */
-function oncall_install() {
-  // make the default 'on call' user role
-  $role = new stdClass;
-  $role->name = 'on call';
-  $role->weight = 1;
-  user_role_save($role);
-
-  // track the 'on call' user roll
-  variable_set('oncall_user_roll', $role->rid);
-
-  // permissions to assign to the role.
-  $perms = array(
-    'oncall access messages',
-    'oncall connect',
-  );
-
-  // grant the permissions. 
-  user_role_grant_permissions($role->rid, $perms); 
-  user_role_grant_permissions(1, array('oncall connect'));
-  user_role_grant_permissions(2, array('oncall connect'));
-}
-
-/**
  * Implements hook_uninstall().
  *  - remove all oncall variables.
  */
@@ -44,10 +17,6 @@ function oncall_uninstall() {
     ->execute();
   foreach ($results as $result) {
     variable_del($result->name);
-  }
-  
-  if (user_role_load_by_name('on call')) {
-    user_role_delete('on call');
   }
 }
 
@@ -66,12 +35,6 @@ function oncall_schema() {
         'not null' => TRUE, 
         'description' => 'A unique On Call team member id',
       ),
-      'uid' => array(
-        'type' => 'int', 
-        'not null' => TRUE, 
-        'default' => 0, 
-        'description' => 'The {users}.uid of the oncall team member',
-      ), 
       'name' => array(
         'type' => 'varchar', 
         'length' => 64, 

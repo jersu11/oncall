@@ -22,14 +22,15 @@ function oncall_page_config() {
   }
 
   $rows = array();
-  $header = array(t('Person'), t('Phone Number'), t('Point Person'));
+  $header = array(t('Person'), t('Phone Number'), t('Point Person'), t('Action'));
   foreach (oncall_get_team() as $member) {
     $lead = ($member['leader'] == 1) ? 'Yes' : 'No';
-    $rows[] = array(l($member['name'], 'user/' . $member['uid']), $member['phone'], $lead);
+    $rows[] = array($member['name'], $member['phone'], $lead, l('edit', 'admin/config/services/oncall/member/edit/' . $member['ocid']));
   }
   
   $out  = "<h3>The On Call Team</h3>";
   $out .= theme('table', array('header' => $header, 'rows' => $rows));
+  $out .= "<h4>" . l('Add A Team Member', 'admin/config/services/oncall/member/add') . "</h4>";
   $out .= drupal_render(drupal_get_form('oncall_config_form'));
   
   return $out;
@@ -42,98 +43,6 @@ function oncall_page_config() {
  * #################################
  * cluster all these things togother
  */
- 
-/**
- * hook_form_alter()
- *  - add telephone number and availability to user edit page
- */
-function oncall_form_alter(&$form, &$form_state, $form_id) {
-  if ($form_id != 'user_profile_form') {
-    return;
-  }
-
-  $account = $form['#user'];
-
-  if (array_key_exists(variable_get('oncall_user_roll', 3), $account->roles)) {
-    $oncall_user = oncall_user_settings($account->uid);
-  
-    $form['oncall'] = array(
-      '#type' => 'fieldset',
-      '#title' => t('On Call Settings'),
-      '#weight' => 1,
-    );
-    
-    $form['oncall']['oc_phone'] = array(
-      '#type' => 'textfield', 
-      '#title' => t('Phone Number'), 
-      '#default_value' => isset($oncall_user->phone) ? $oncall_user->phone : '12065551212', 
-      '#size' => 30, 
-      '#maxlength' => 15, 
-      '#description' => t('Enter the phone number you\'d like to have your OnCall SMS messages sent. Enter only numbers in this field, and include the country code. For US numbers, including the country code means starting with the number 1'),
-    );
-    
-    $form['oncall']['oc_active'] = array(
-      '#type' => 'radios',
-      '#title' => t('On Call Availability'),
-      '#default_value' => isset($oncall_user->active) ? $oncall_user->active : 1,
-      '#options' => array(0 => t('Away'), 1 => t('Available')),
-      '#description' => t('When set to "Available", sms messages from the On Call service may be sent to the telephone number given above.'),
-    );
-
-    $form['#validate'][] = 'oncall_user_form_validate';
-    $form['#submit'][] = 'oncall_user_form_submit';
-  } 
-}
- 
-/**
- * Validate the phone number
- * - some phone validators found around the web
- */
-function oncall_user_form_validate($form, &$form_state) {
-  $phone_validator = array( 
-    'us' => '/^(1([-\. ]?\d{3})[-\. ]?)?(\d{3})([-\. ]?\d{4})$/',
-    'uk' => '/^(\44\s?7\d{3}|\(?07\d{3}\)?)\s?\d{3}\s?\d{3}$/',
-    'uae' => '/^(\97[\s]{0,1}[\-]{0,1}[\s]{0,1}1|0)50[\s]{0,1}[\-]{0,1}[\s]{0,1}[1-9]{1}[0-9]{6}$/',
-    'nz' => '/^\([0]\d{2}\))(\d{6,7}$/',
-  );
-
-  $validate = variable_get('oncall_validate_phone', 'none');
-  if (isset($phone_validator[$validate])) {
-    if (!preg_match($phone_validator[$validate], $form_state['values']['oc_phone'])) {
-      form_set_error('oc_phone', t('That does not look like a valid telephone number'));
-    }  
-  }
-}
-
-/** 
- * Store the user data in our 'oncall_team' table
- */
-function oncall_user_form_submit($form, &$form_state) {
-  $account = $form['#user'];
-  $phone = preg_replace('/\D/', '', $form_state['values']['oc_phone']);
-  
-  // find if this user is already in our table
-  $exists = db_query("SELECT COUNT(*) as num FROM {oncall_team} WHERE uid = :uid", array(":uid" => $account->uid))->fetchField();
-
-  if ($exists) {
-    db_update('oncall_team') 
-      ->fields(array(
-        'phone' => $phone,
-        'available' => $form_state['values']['oc_active'],
-      ))
-      ->condition('uid', $account->uid, '=')
-      ->execute();
-  }
-  else {
-    db_insert('oncall_team')
-      ->fields(array(
-        'uid' => $account->uid,
-        'phone' => $phone,
-        'available' => $form_state['values']['oc_active'],
-      ))
-      ->execute();
-  }
-} 
 
 /**
  * OnCall config page settings
@@ -142,35 +51,13 @@ function oncall_config_form($form, &$form_state) {
   $team = oncall_get_team();
   $team_select = array();
   $leader = 0;
-  $oncall_role = user_role_load(variable_get('oncall_user_roll', 3));
 
   foreach ($team as $member) {
     if ($member['leader'] == 1) {
-      $leader = $member['uid'];
+      $leader = $member['ocid'];
     }
-    $team_select[$member['uid']] = $member['name'];
+    $team_select[$member['ocid']] = $member['name'];
   }
-  
-  // instruction for adding team members
-  $ins  = "<p>To add members to your On Call team, follow these instructions:<ol>";
-  $ins .= "<li>On Call members are Drupal Users. If your team member isn't already a Drupal User " . l('make them one.', 'admin/people/create') . "</li>";
-  $ins .= "<li>From the " . l('user list page', 'admin/people') . ", check the box next to the names of the people to add to your team</li>";
-  $ins .= "<li>Use the 'Update Options' drop down menu and under the sub-head 'Add a role to the selected users', select the option '" . $oncall_role->name . "'</li>";
-  $ins .= "<li>Press the 'Update' button</li>";
-  $ins .= "<li>Each team member needs to have a telephone number registered. Click the 'edit' option for the team member to add a phone number</li>";
-  $ins .= "<li>Scroll to the section named 'On Call Settings', and enter the phone number there.</li>";  
-  $ins .= "<li>Come back to this page - your team will be viewable in the table above</li>";
-  $ins .= "</ol></p>";
-  
-  $form['oncall_info'] = array(
-    '#type' => 'fieldset', 
-    '#title' => t('Instructions for Adding Members to your On Call Team'), 
-    '#collapsible' => TRUE, 
-    '#collapsed' => TRUE,
-  );
-  $form['oncall_info']['instructions'] = array(
-    '#markup' => $ins,
-  );
   
   // select team leader
   $form['oncall_point'] = array(
@@ -270,7 +157,7 @@ function oncall_config_form_submit($form, &$form_state) {
 
   db_update('oncall_team')
     ->fields(array('leader' => 1))
-    ->condition('uid', $form_state['values']['oncall_point'], '=')
+    ->condition('ocid', $form_state['values']['oncall_point'], '=')
     ->execute();
     
   variable_set('oncall_sms_msg', $form_state['values']['oncall_sms']);
@@ -299,20 +186,10 @@ function oncall_config_extra_form($form, &$form_state) {
     '#description' => t('Your application phone number is your Twilio number that will be used to access this On Call module. This is needed here to send SMS messages.'),
   );
 
-  $form['oncall_user_roll'] = array(
-    '#type' => 'select', 
-    '#title' => t('The User Role that tracks team members'), 
-    '#default_value' => variable_get('oncall_user_roll', 2), 
-    '#empty_option' => t('No Role'), 
-    '#options' => user_roles(), 
-    '#tree' => FALSE, 
-    '#description' => t('Members of this User Role will be able to set their telephone number and be tracked as a part of the On Call team.'),
-  );
-
   $form['oncall_validate_phone'] = array(
     '#type' => 'select', 
     '#title' => t('Phone Number Validation'), 
-    '#default_value' => variable_get('oncall_validate_phone', 'none'), 
+    '#default_value' => variable_get('oncall_validate_phone', 'us'), 
     '#empty_option' => t('No Validation'), 
     '#options' => array('us' => 'United States', 'uk' => 'United Kingdom', 'uae' => 'United Arab Emirates', 'nz' => 'New Zealand'), 
     '#tree' => FALSE, 
@@ -333,6 +210,127 @@ function oncall_config_extra_form($form, &$form_state) {
 }
 
 
+/** 
+ * OnCall Team Member ADD/EDIT
+ */
+function oncall_member_edit_form($form, &$form_state, $ocid = 0) {
+  $oncall_user = oncall_user_settings($ocid);
+      
+  $form['oncall_name'] = array(
+    '#type' => 'textfield', 
+    '#title' => t('Member Name'), 
+    '#default_value' => isset($oncall_user->name) ? $oncall_user->name : '', 
+    '#size' => 30, 
+    '#maxlength' => 15, 
+    '#description' => t('Enter a name for this team member. This name will be appended to team SMS messages, so ideally, it should be short.'),
+  );
+  
+  $form['oncall_phone'] = array(
+    '#type' => 'textfield', 
+    '#title' => t('Phone Number'), 
+    '#default_value' => isset($oncall_user->phone) ? $oncall_user->phone : '12065551212', 
+    '#size' => 30, 
+    '#maxlength' => 15, 
+    '#description' => t('Enter the phone number you\'d like to have your OnCall SMS messages sent. Enter only numbers in this field, and include the country code. For US numbers, including the country code means starting with the number 1'),
+  );
+    
+  $form['oncall_active'] = array(
+    '#type' => 'radios',
+    '#title' => t('On Call Availability'),
+    '#default_value' => isset($oncall_user->active) ? $oncall_user->active : 1,
+    '#options' => array(0 => t('Away'), 1 => t('Available')),
+    '#description' => t('When set to "Available", sms messages from the On Call service may be sent to the telephone number given above.'),
+  );
+
+  $form['ocid'] = array(
+    '#type' => 'value', 
+    '#value' => $ocid
+  );
+
+  $form['add_member'] = array(
+    '#type' => 'submit', 
+    '#value' => t('Save Team Member'), 
+  );
+  
+  if ($ocid > 0) {
+    $form['delete_member'] = array(
+      '#type' => 'submit', 
+      '#value' => t('Remove Team Member'), 
+      '#submit' => array('oncall_member_remove'),
+    );
+  }
+
+  return $form;
+}
+
+/**
+ * OnCall Team Member Validate
+ */
+function oncall_member_edit_form_validate($form, &$form_state) {
+  $phone_validator = array( 
+    'us' => '/^(1([-\. ]?\d{3})[-\. ]?)?(\d{3})([-\. ]?\d{4})$/',
+    'uk' => '/^(44\s?7\d{3}|\(?07\d{3}\)?)\s?\d{3}\s?\d{3}$/',
+    'uae' => '/^(97[\s]{0,1}[\-]{0,1}[\s]{0,1}1|0)50[\s]{0,1}[\-]{0,1}[\s]{0,1}[1-9]{1}[0-9]{6}$/',
+    'nz' => '/^\([0]\d{2}\))(\d{6,7}$/',
+  );
+
+  $validate = variable_get('oncall_validate_phone', 'none');
+  if (isset($phone_validator[$validate])) {
+    if (!preg_match($phone_validator[$validate], $form_state['values']['oncall_phone'])) {
+      form_set_error('oncall_phone', t('That does not look like a valid telephone number'));
+    }  
+  }
+}
+
+/**
+ * OnCall Team Member Submit
+ */
+function oncall_member_edit_form_submit($form, &$form_state) {
+  $ocid = $form_state['values']['ocid'];
+  $phone = preg_replace('/\D/', '', $form_state['values']['oncall_phone']);
+  $name = $form_state['values']['oncall_name'];
+  $active = $form_state['values']['oncall_active'];
+
+  // find if this user is already in our table
+  $exists = db_query("SELECT COUNT(*) as num FROM {oncall_team} WHERE ocid = :uid", array(":uid" => $ocid))->fetchField();
+
+  if ($exists) {
+    db_update('oncall_team') 
+      ->fields(array(
+        'name' => $name,
+        'phone' => $phone,
+        'available' => $active,
+      ))
+      ->condition('ocid', $ocid, '=')
+      ->execute();
+  }
+  else {
+    db_insert('oncall_team')
+      ->fields(array(
+        'ocid' => $ocid,
+        'name' => $name,
+        'phone' => $phone,
+        'available' => $active,
+      ))
+      ->execute();
+  }
+  
+  $form_state['redirect'] = 'admin/config/services/oncall';  
+}
+
+/**
+ * OnCall Team Member Delete
+ */
+function oncall_member_remove($form, &$form_state) {
+  $ocid = $form_state['values']['ocid'];
+  db_delete('oncall_team')
+  ->condition('ocid', $ocid)
+  ->execute();
+  
+  $form_state['redirect'] = 'admin/config/services/oncall'; 
+}
+
+
 /**
  * FORM HELPERS
  *
@@ -341,9 +339,10 @@ function oncall_config_extra_form($form, &$form_state) {
 /**
  * Retreive the user settings
  */
-function oncall_user_settings($uid) {
-  return db_query("SELECT * FROM {oncall_team} WHERE uid = :uid", array(":uid" => $uid))->fetchObject();
+function oncall_user_settings($ocid) {
+  return db_query("SELECT * FROM {oncall_team} WHERE ocid = :id", array(":id" => $ocid))->fetchObject();
 }
+
 
 /**
  * Save uploaded 'canned' messages
