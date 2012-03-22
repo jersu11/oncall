@@ -222,7 +222,7 @@ function oncall_twilio_dispatch() {
   switch ($choice) {
     case 1:
       // leave a help message for the on call team
-      $response->say("Record the current status after the tone, press pound when complete.");
+      $response->say("Record your help request after the tone, press pound when complete.");
       $response->record(array(
         'action' => '/oncall/record/help',
         'maxLength' => 30
@@ -242,7 +242,7 @@ function oncall_twilio_dispatch() {
       
     case 3:
       // on call team member leaves a status update message
-      $response->say("Record the current status after the tone, press pound when complete.");
+      $response->say("Record the issue status after the tone, press pound when complete.");
       $response->record(array(
         'action' => '/oncall/record/status',
         'maxLength' => 30
