@@ -356,7 +356,7 @@ function oncall_page_messages() {
   $rows = array();
   $header = array(t('Type'), t('Date/Time'), t('Message'), t('Left By'));
   foreach ($result as $msg) {
-    $left_by = ($team_names[$msg->phone]) ? $team_names[$msg->phone] : $msg->phone;
+    $left_by = (isset($team_names[$msg->phone])) ? $team_names[$msg->phone] : $msg->phone;
     $dte = format_date($msg->created, 'short');
     $audio = theme('oncall_audio', array('src' => $msg->message . '.mp3'));
     $rows[] = array($msg->type, $dte, $audio, $left_by);
