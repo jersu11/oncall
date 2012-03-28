@@ -334,6 +334,7 @@ function oncall_twilio_sms() {
         );
       }
     }
+    
   }
 
   return NULL;
@@ -445,18 +446,24 @@ function oncall_get_message($type = 'welcome') {
  *  - only return the people who are both available and current members of the 
  *    'on call' user roll, and who are not blocked
  */
-function oncall_get_team() {
-  $team = &drupal_static(__FUNCTION__);
+function oncall_get_team($who = 'available') {
+  $team = &drupal_static(__FUNCTION__, array());
   
-  if (!isset($team)) {
-    $result = db_query("SELECT * FROM {oncall_team} WHERE available = 1");
-    $team = array();
-    foreach ($result as $record) {
-      $team[] = array('ocid' => $record->ocid, 'name' => $record->name, 'phone' => $record->phone, 'leader' => $record->leader);
+  if (!isset($team[$who])) {
+    $vals = array();
+    if ($who == 'available') {
+      $result = db_query("SELECT * FROM {oncall_team} WHERE available = 1");
     }
+    elseif ($who == 'all') {
+      $result = db_query("SELECT * FROM {oncall_team} ORDER BY available DESC");
+    }
+    foreach ($result as $record) {
+      $vals[] = array('ocid' => $record->ocid, 'name' => $record->name, 'phone' => $record->phone, 'leader' => $record->leader, 'available' => $record->available);
+    }
+    $team[$who] = $vals;
   }
   
-  return $team;
+  return $team[$who];
 }
 
 /**
@@ -467,7 +474,7 @@ function oncall_get_team_numbers() {
   $numbers = &drupal_static(__FUNCTION__);
   
   if (!isset($numbers)) {
-    $team = oncall_get_team();
+    $team = oncall_get_team('available');
     $numbers = array();
     foreach ($team as $member) {
       // add the plus (+) in front of each number

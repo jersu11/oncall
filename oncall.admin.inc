@@ -23,9 +23,12 @@ function oncall_page_config() {
 
   $rows = array();
   $header = array(t('Person'), t('Phone Number'), t('Point Person'), t('Action'));
-  foreach (oncall_get_team() as $member) {
-    $lead = ($member['leader'] == 1) ? 'Yes' : 'No';
-    $rows[] = array($member['name'], $member['phone'], $lead, l('edit', 'admin/config/services/oncall/member/edit/' . $member['ocid']));
+  if ($team = oncall_get_team('all')) {
+    foreach ($team as $member) {
+      $lead = ($member['leader'] == 1) ? 'Yes' : 'No';
+      $name = ($member['available']) ? $member['name'] : $member['name'] . " (unavailable)";
+      $rows[] = array($name, $member['phone'], $lead, l('edit', 'admin/config/services/oncall/member/edit/' . $member['ocid']));
+    }
   }
   
   $out  = "<h3>The On Call Team</h3>";
@@ -48,15 +51,16 @@ function oncall_page_config() {
  * OnCall config page settings
  */
 function oncall_config_form($form, &$form_state) {
-  $team = oncall_get_team();
   $team_select = array();
   $leader = 0;
 
-  foreach ($team as $member) {
-    if ($member['leader'] == 1) {
-      $leader = $member['ocid'];
+  if ($team = oncall_get_team('available')) {
+    foreach ($team as $member) {
+      if ($member['leader'] == 1) {
+        $leader = $member['ocid'];
+      }
+      $team_select[$member['ocid']] = $member['name'];
     }
-    $team_select[$member['ocid']] = $member['name'];
   }
   
   // select team leader
@@ -219,7 +223,7 @@ function oncall_member_edit_form($form, &$form_state, $ocid = 0) {
   $form['oncall_name'] = array(
     '#type' => 'textfield', 
     '#title' => t('Member Name'), 
-    '#default_value' => isset($oncall_user->name) ? $oncall_user->name : '', 
+    '#default_value' => (isset($oncall_user->name)) ? $oncall_user->name : '', 
     '#size' => 30, 
     '#maxlength' => 15, 
     '#description' => t('Enter a name for this team member. This name will be appended to team SMS messages, so ideally, it should be short.'),
@@ -228,7 +232,7 @@ function oncall_member_edit_form($form, &$form_state, $ocid = 0) {
   $form['oncall_phone'] = array(
     '#type' => 'textfield', 
     '#title' => t('Phone Number'), 
-    '#default_value' => isset($oncall_user->phone) ? $oncall_user->phone : '12065551212', 
+    '#default_value' => (isset($oncall_user->phone)) ? $oncall_user->phone : '12065551212', 
     '#size' => 30, 
     '#maxlength' => 15, 
     '#description' => t('Enter the phone number you\'d like to have your OnCall SMS messages sent. Enter only numbers in this field, and include the country code. For US numbers, including the country code means starting with the number 1'),
@@ -237,7 +241,7 @@ function oncall_member_edit_form($form, &$form_state, $ocid = 0) {
   $form['oncall_active'] = array(
     '#type' => 'radios',
     '#title' => t('On Call Availability'),
-    '#default_value' => isset($oncall_user->active) ? $oncall_user->active : 1,
+    '#default_value' => (isset($oncall_user->available)) ? $oncall_user->available : 1,
     '#options' => array(0 => t('Away'), 1 => t('Available')),
     '#description' => t('When set to "Available", sms messages from the On Call service may be sent to the telephone number given above.'),
   );
